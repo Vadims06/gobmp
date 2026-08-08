@@ -28,6 +28,7 @@ type PeerStateChange struct {
 	Name            string         `json:"name,omitempty"`
 	RemoteBGPID     string         `json:"remote_bgp_id,omitempty"`
 	RouterIP        string         `json:"router_ip,omitempty"`
+	PeerHash        string         `json:"peer_hash,omitempty"`
 	Timestamp       string         `json:"timestamp,omitempty"`
 	RemoteASN       uint32         `json:"remote_asn,omitempty"`
 	RemoteIP        string         `json:"remote_ip,omitempty"`

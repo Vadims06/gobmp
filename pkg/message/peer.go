@@ -61,14 +61,22 @@ func (p *producer) producePeerMessage(op int, msg bmp.Message) {
 		// happen exactly once and happen-before the channel close.  After the
 		// first PeerUp the fields are immutable — no data race with readers
 		// that wait on speakerReady.
-		p.speakerReadyOnce.Do(func() {
-			p.speakerIP = m.LocalIP
-			md5Sum := md5.Sum([]byte(p.speakerIP))
-			p.speakerHash = hex.EncodeToString(md5Sum[:])
-			close(p.speakerReady)
-		})
+		// An RFC 9069 Loc-RIB Instance Peer reports no local address, so latching
+		// the speaker identity on it makes every BMP source hash to md5("0.0.0.0")
+		// and become indistinguishable downstream. Speakers that advertise a
+		// Loc-RIB peer send it first, so skip it and take the identity from the
+		// first Peer Up that actually carries one.
+		if usableSpeakerAddress(m.LocalIP, msg.PeerHeader.PeerType) {
+			p.speakerReadyOnce.Do(func() {
+				p.speakerIP = m.LocalIP
+				md5Sum := md5.Sum([]byte(p.speakerIP))
+				p.speakerHash = hex.EncodeToString(md5Sum[:])
+				close(p.speakerReady)
+			})
+		}
 		m.RouterIP = p.speakerIP
 		m.RouterHash = p.speakerHash
+		m.PeerHash = msg.PeerHeader.GetPeerHash()
 
 		m.LocalASN = uint32(peerUpMsg.SentOpen.MyAS)
 		if lasn, ok := peerUpMsg.SentOpen.Is4BytesASCapable(); ok {
@@ -123,6 +131,7 @@ func (p *producer) producePeerMessage(op int, msg bmp.Message) {
 			RouterIP:   p.speakerIP,
 			PeerType:   uint8(msg.PeerHeader.PeerType),
 			RouterHash: p.speakerHash,
+			PeerHash:   msg.PeerHeader.GetPeerHash(),
 			BMPReason:  int(peerDownMsg.Reason),
 			RemoteASN:  msg.PeerHeader.PeerAS,
 			PeerRD:     msg.PeerHeader.GetPeerDistinguisherString(),
@@ -144,4 +153,15 @@ func (p *producer) producePeerMessage(op int, msg bmp.Message) {
 		glog.Errorf("failed to process peer message with error: %+v", err)
 		return
 	}
+}
+
+// usableSpeakerAddress reports whether a Peer Up can supply the collector's
+// identity for this BMP session. A Loc-RIB Instance Peer (RFC 9069) and an
+// unspecified local address both cannot.
+func usableSpeakerAddress(localIP string, peerType bmp.PeerType) bool {
+	if peerType == bmp.PeerType3 { // RFC 9069 Loc-RIB Instance Peer
+		return false
+	}
+	parsed := net.ParseIP(localIP)
+	return parsed != nil && !parsed.IsUnspecified()
 }
